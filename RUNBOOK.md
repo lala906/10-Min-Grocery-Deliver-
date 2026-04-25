@@ -89,7 +89,7 @@ SMTP_PASS=...
 
 ### Frontend `.env`
 ```env
-VITE_API_BASE_URL=http://localhost:5000/api
+VITE_API_BASE_URL=https://one0-min-grocery-deliver.onrender.com
 VITE_GOOGLE_MAPS_KEY=<your_google_maps_key>  # Optional for live map
 ```
 
