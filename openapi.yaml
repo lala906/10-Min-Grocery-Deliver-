@@ -1,0 +1,743 @@
+openapi: "3.0.3"
+info:
+  title: 10Min Grocery — Delivery Partner Management API
+  version: "2.0.0"
+  description: |
+    Production-grade Delivery Partner Management System for a Blinkit-style grocery delivery platform.
+
+    ## Authentication
+    - **Users / Admins**: JWT via `Authorization: Bearer <token>` (from `/api/auth/login`)
+    - **Riders**: JWT via `Authorization: Bearer <token>` (from `/api/riders/login`)
+
+    ## Rate Limits
+    - Auth endpoints: 20 req / 15 min per IP
+    - General API: 120 req / min per IP
+
+  contact:
+    name: 10Min Engineering
+    email: dev@10min.com
+
+servers:
+  - url: http://localhost:5000/api
+    description: Local Development
+  - url: https://your-production-domain.com/api
+    description: Production
+
+tags:
+  - name: Auth
+    description: User & Admin authentication
+  - name: Riders
+    description: Rider management (self + admin)
+  - name: KYC
+    description: Know Your Customer verification
+  - name: Orders
+    description: Order lifecycle management
+  - name: Assignments
+    description: Pluggable assignment engine
+  - name: Payouts
+    description: Rider payout management
+  - name: Disputes
+    description: Dispute management
+  - name: Audit
+    description: Immutable audit logs
+  - name: Zones
+    description: Delivery zone management
+  - name: Admin
+    description: Admin dashboard & controls
+  - name: Products
+    description: Product catalog
+  - name: Categories
+    description: Product categories
+
+paths:
+  # ─── Auth ──────────────────────────────────────────────────────────
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login as user or admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  example: admin@10min.com
+                password:
+                  type: string
+                  example: admin123
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string }
+                password: { type: string, minLength: 6 }
+      responses:
+        "201":
+          description: User registered
+        "400":
+          description: User already exists
+
+  # ─── Riders ────────────────────────────────────────────────────────
+  /riders/login:
+    post:
+      tags: [Riders]
+      summary: Rider login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, password]
+              properties:
+                phone: { type: string, example: "9876543210" }
+                password: { type: string }
+      responses:
+        "200":
+          description: Rider authenticated with JWT token
+        "401":
+          description: Invalid credentials
+
+  /riders/register:
+    post:
+      tags: [Riders]
+      summary: Rider self-onboarding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RiderRegisterBody"
+      responses:
+        "201":
+          description: Rider created
+        "400":
+          description: Rider already exists
+
+  /riders/profile:
+    get:
+      tags: [Riders]
+      summary: Get rider's own profile
+      security: [{ riderAuth: [] }]
+      responses:
+        "200":
+          description: Rider profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rider"
+
+  /riders/availability:
+    put:
+      tags: [Riders]
+      summary: Toggle rider online/offline
+      security: [{ riderAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isAvailable: { type: boolean }
+      responses:
+        "200":
+          description: Availability updated
+        "403":
+          description: Account not active / KYC not approved
+
+  /riders/location:
+    put:
+      tags: [Riders]
+      summary: Update rider GPS location (called every 4s)
+      security: [{ riderAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+                speed: { type: number }
+                heading: { type: number }
+      responses:
+        "200":
+          description: Location updated
+
+  /riders/orders:
+    get:
+      tags: [Riders]
+      summary: Get all orders assigned to this rider
+      security: [{ riderAuth: [] }]
+      responses:
+        "200":
+          description: Array of orders
+
+  /riders/orders/{id}/status:
+    put:
+      tags: [Riders]
+      summary: Update order status (Rider flow)
+      security: [{ riderAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [Picked Up, In Transit, Out for Delivery, Delivered]
+      responses:
+        "200":
+          description: Order status updated
+
+  /riders/earnings:
+    get:
+      tags: [Riders]
+      summary: Get rider earning summary (today / week / all time)
+      security: [{ riderAuth: [] }]
+      responses:
+        "200":
+          description: Earnings summary
+
+  /riders:
+    get:
+      tags: [Riders]
+      summary: List all riders (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, inactive, suspended, blacklisted] }
+        - name: kycStatus
+          in: query
+          schema: { type: string, enum: [not_submitted, pending, approved, rejected] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Paginated rider list
+
+  /riders/{id}/status:
+    put:
+      tags: [Riders]
+      summary: Activate / Suspend / Blacklist rider (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [active, inactive, suspended, blacklisted]
+                reason: { type: string }
+      responses:
+        "200":
+          description: Status updated + audit logged
+
+  # ─── KYC ────────────────────────────────────────────────────────────
+  /kyc/submit:
+    post:
+      tags: [KYC]
+      summary: Rider submits KYC documents
+      security: [{ riderAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KYCSubmitBody"
+      responses:
+        "201":
+          description: KYC submitted
+
+  /kyc/queue:
+    get:
+      tags: [KYC]
+      summary: Get KYC verification queue (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, rejected] }
+      responses:
+        "200":
+          description: KYC records
+
+  /kyc/{id}/approve:
+    put:
+      tags: [KYC]
+      summary: Approve a KYC record (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: KYC approved, rider activated
+
+  /kyc/{id}/reject:
+    put:
+      tags: [KYC]
+      summary: Reject a KYC record with reason (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: KYC rejected
+
+  # ─── Assignments ─────────────────────────────────────────────────────
+  /assignments/auto:
+    post:
+      tags: [Assignments]
+      summary: Trigger auto-assignment engine for an order
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                orderId: { type: string }
+      responses:
+        "200":
+          description: Best rider assigned using weighted scoring
+        "404":
+          description: No eligible riders found
+
+  /assignments/manual:
+    post:
+      tags: [Assignments]
+      summary: Manually assign a specific rider to an order
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                orderId: { type: string }
+                riderId: { type: string }
+                reason: { type: string }
+      responses:
+        "200":
+          description: Assignment created
+
+  /assignments/{id}/reassign:
+    put:
+      tags: [Assignments]
+      summary: Reassign order to a different rider
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                newRiderId: { type: string }
+                reason: { type: string }
+      responses:
+        "200":
+          description: Reassignment successful
+
+  /assignments/history/{orderId}:
+    get:
+      tags: [Assignments]
+      summary: Get full assignment history for an order
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Assignment history array
+
+  /assignments/config:
+    get:
+      tags: [Assignments]
+      summary: Get current assignment engine config
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Config with weights and toggles
+    put:
+      tags: [Assignments]
+      summary: Update assignment engine config
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Config updated
+
+  # ─── Payouts ────────────────────────────────────────────────────────
+  /payouts/calculate:
+    post:
+      tags: [Payouts]
+      summary: Calculate payout for a rider for a date range
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                riderId: { type: string }
+                periodStart: { type: string, format: date }
+                periodEnd: { type: string, format: date }
+      responses:
+        "200":
+          description: Payout calculated with commission breakdown
+
+  /payouts:
+    get:
+      tags: [Payouts]
+      summary: List all payouts (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, processing, paid, failed] }
+      responses:
+        "200":
+          description: Payout list
+
+  /payouts/{id}/mark-paid:
+    put:
+      tags: [Payouts]
+      summary: Mark a payout as paid with payment reference
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paymentRef: { type: string }
+                paymentMethod: { type: string }
+      responses:
+        "200":
+          description: Payout marked paid
+
+  /payouts/export:
+    get:
+      tags: [Payouts]
+      summary: Export payouts as CSV file
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: CSV file download
+          content:
+            text/csv: {}
+
+  # ─── Disputes ────────────────────────────────────────────────────────
+  /disputes:
+    post:
+      tags: [Disputes]
+      summary: Raise a new dispute
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisputeBody"
+      responses:
+        "201":
+          description: Dispute created
+    get:
+      tags: [Disputes]
+      summary: List all disputes (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Disputes list
+
+  /disputes/{id}/status:
+    put:
+      tags: [Disputes]
+      summary: Update dispute status
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Status updated
+
+  /disputes/{id}/resolve:
+    put:
+      tags: [Disputes]
+      summary: Resolve a dispute with notes
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resolution: { type: string }
+      responses:
+        "200":
+          description: Dispute resolved
+
+  # ─── Audit ────────────────────────────────────────────────────────
+  /audit:
+    get:
+      tags: [Audit]
+      summary: Get paginated audit logs (admin)
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: actorRole
+          in: query
+          schema: { type: string }
+        - name: severity
+          in: query
+          schema: { type: string, enum: [info, warning, critical] }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Paginated audit logs
+
+  # ─── Admin Dashboard ──────────────────────────────────────────────
+  /admin/dashboard:
+    get:
+      tags: [Admin]
+      summary: Get full admin dashboard stats
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Dashboard metrics
+
+  /admin/live-map:
+    get:
+      tags: [Admin]
+      summary: Get live map data (active riders + orders)
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Live map data
+
+  # ─── Zones ────────────────────────────────────────────────────────
+  /zones:
+    get:
+      tags: [Zones]
+      summary: List all delivery zones
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Zone list
+    post:
+      tags: [Zones]
+      summary: Create a delivery zone
+      security: [{ adminAuth: [] }]
+      responses:
+        "201":
+          description: Zone created
+
+  /zones/{id}/riders:
+    put:
+      tags: [Zones]
+      summary: Assign riders to a zone
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Zone updated
+
+components:
+  securitySchemes:
+    adminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    riderAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        status: { type: string }
+        message: { type: string }
+        data:
+          type: object
+          properties:
+            _id: { type: string }
+            name: { type: string }
+            email: { type: string }
+            role: { type: string, enum: [customer, admin] }
+            token: { type: string }
+
+    Rider:
+      type: object
+      properties:
+        _id: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        status:
+          type: string
+          enum: [active, inactive, suspended, blacklisted]
+        kycStatus:
+          type: string
+          enum: [not_submitted, pending, approved, rejected]
+        isAvailable: { type: boolean }
+        isOnline: { type: boolean }
+        rating: { type: number }
+        totalDeliveries: { type: integer }
+        commissionRate: { type: number }
+        vehicleDetails:
+          type: object
+          properties:
+            vehicleType: { type: string }
+            numberPlate: { type: string }
+            model: { type: string }
+        currentLocation:
+          type: object
+          properties:
+            lat: { type: number }
+            lng: { type: number }
+            updatedAt: { type: string }
+
+    RiderRegisterBody:
+      type: object
+      required: [name, phone, password]
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        password: { type: string, minLength: 6 }
+        vehicleDetails:
+          type: object
+          properties:
+            vehicleType:
+              type: string
+              enum: [bicycle, motorcycle, scooter, electric_bike, car]
+            numberPlate: { type: string }
+            model: { type: string }
+
+    KYCSubmitBody:
+      type: object
+      required: [licenseNumber, idProofType, idProofNumber]
+      properties:
+        licenseNumber: { type: string }
+        licenseUrl: { type: string }
+        idProofType:
+          type: string
+          enum: [aadhaar, pan, voter_id, passport]
+        idProofNumber: { type: string }
+        idProofUrl: { type: string }
+        vehicleRegUrl: { type: string }
+        selfieUrl: { type: string }
+
+    DisputeBody:
+      type: object
+      required: [type, description]
+      properties:
+        type:
+          type: string
+          enum: [payment_issue, delivery_issue, wrong_item, damage, rider_behaviour, other]
+        description: { type: string }
+        orderId: { type: string }
+        priority:
+          type: string
+          enum: [low, medium, high, critical]

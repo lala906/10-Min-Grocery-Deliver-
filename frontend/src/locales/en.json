@@ -1,0 +1,18 @@
+{
+  "blinkit": "10Min",
+  "search_placeholder": "Search for products...",
+  "login": "Login",
+  "my_cart": "My Cart",
+  "account": "Account",
+  "admin_portal": "Admin Portal",
+  "support": "Support",
+  "wallet": "Wallet",
+  "membership": "Premium",
+  "popular_products": "Popular Products",
+  "recommended": "Recommended for You",
+  "fbt": "Frequently Bought Together",
+  "add_to_cart": "ADD",
+  "out_of_stock": "Out of Stock",
+  "delivered_in": "Delivered in",
+  "mins": "mins"
+}
